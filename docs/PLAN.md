@@ -192,7 +192,7 @@ SUSHI TEI PIK · Thu 16 Oct 20:14
 - `/review`: run the daily review now
 - `/balances`: payable per card and the held total
 - `/held`: list held charges with their book months
-- `/cards`: register a card by its notification email (sender, plus the card digits the email shows) and set its cutoff and due days; a new bank works through the model fallback, and gets a parser only if that proves unreliable
+- `/cards`: register a card by its notification email (sender, plus the card digits the email shows) and set its cutoff and due days; every bank you use gets its own parser, and the model fallback only covers emails no parser knows yet (a new bank before its parser exists, or a changed layout)
 - `/merchants`: get the merchant rules document and remembered answers; send back an edited copy to save a new version, after validation and a diff
 - `/new`: clear the conversation window
 - `/help`: example phrases
@@ -240,7 +240,7 @@ Ship the happy path for one card first; each phase ends with a check you can run
 - [ ] `/cards` for cutoff and due days
 - [ ] Due-date reminders
 - [ ] Monthly cleanup
-- [ ] Check the model fallback on the remaining banks (CIMB Niaga, Jenius); write a parser only where it fails
+- [ ] Parsers for any further banks you use (Mandiri, CIMB Niaga and Jenius were written early, in Phase 1)
 - [ ] Failure alerts (see Operations)
 
 **Done when:** one full statement cycle passes with reminders sent and no missed alerts.

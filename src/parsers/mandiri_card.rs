@@ -5,19 +5,15 @@
 //! XXXX1234") and lists "Label : value" lines for the time, merchant and
 //! amount.
 
-use chrono::{FixedOffset, NaiveDateTime};
+use chrono::NaiveDateTime;
 
-use super::{ParseError, ParsedCharge, Tokens, parse_rupiah};
+use super::{ParseError, ParsedCharge, Tokens, masked_card_ref, parse_rupiah, to_utc, wib};
 
 /// Name of this template, used to pick the parser for an email.
 pub const NAME: &str = "mandiri_card";
 
 /// Where these emails come from.
 pub const SENDER: &str = "mandiricare.onlinenotif@bankmandiri.co.id";
-
-/// The email gives no time zone. Mandiri is a Jakarta bank and its other
-/// emails say WIB, so we read these times as WIB (UTC+7).
-const WIB_SECONDS: i32 = 7 * 3600;
 
 /// Parses the plain-text body of the email.
 pub fn parse(body: &str) -> Result<ParsedCharge, ParseError> {
@@ -32,7 +28,6 @@ pub fn parse(body: &str) -> Result<ParsedCharge, ParseError> {
             value: raw_time.to_string(),
         }
     })?;
-    let wib = FixedOffset::east_opt(WIB_SECONDS).expect("UTC+7 is a valid offset");
 
     let merchant_raw = tokens.value("Merchant/ATM")?.to_string();
     let amount_idr = parse_rupiah("Sejumlah", tokens.value("Sejumlah")?)?;
@@ -40,7 +35,8 @@ pub fn parse(body: &str) -> Result<ParsedCharge, ParseError> {
     Ok(ParsedCharge {
         merchant_raw,
         amount_idr,
-        charged_at: super::to_utc(local.date(), local.time(), wib),
+        // The email gives no time zone; Mandiri's other emails say WIB.
+        charged_at: to_utc(local.date(), local.time(), wib()),
         card_ref,
         card_name: None,
     })
@@ -54,18 +50,7 @@ fn parse_card_digits(body: &str) -> Result<String, ParseError> {
         .ok_or(ParseError::MissingField(LABEL))?
         .1;
     let masked = after.split_whitespace().next().unwrap_or_default();
-    let digits = masked.trim_start_matches(['X', 'x', '*']);
-    let valid = masked.len() > digits.len()
-        && digits.len() == 4
-        && digits.chars().all(|c| c.is_ascii_digit());
-    if valid {
-        Ok(digits.to_string())
-    } else {
-        Err(ParseError::BadValue {
-            field: LABEL,
-            value: masked.to_string(),
-        })
-    }
+    masked_card_ref(LABEL, masked, 4)
 }
 
 #[cfg(test)]

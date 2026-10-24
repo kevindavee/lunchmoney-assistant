@@ -5,8 +5,8 @@
 //! the merchant under "Penerima" and the card under "Sumber Dana".
 
 use super::{
-    ParseError, ParsedCharge, Tokens, parse_indonesian_date, parse_indonesian_time, parse_rupiah,
-    to_utc,
+    ParseError, ParsedCharge, Tokens, masked_card_ref, parse_indonesian_time, parse_named_date,
+    parse_rupiah, to_utc,
 };
 
 /// Name of this template, used to pick the parser for an email.
@@ -23,7 +23,7 @@ pub fn parse(body: &str) -> Result<ParsedCharge, ParseError> {
     // "Penerima" is followed by the merchant name, then its city.
     let merchant_raw = tokens.value("Penerima")?.to_string();
 
-    let date = parse_indonesian_date("Tanggal", tokens.value("Tanggal")?)?;
+    let date = parse_named_date("Tanggal", tokens.value("Tanggal")?)?;
     let (time, offset) = parse_indonesian_time("Jam", tokens.value("Jam")?)?;
     let amount_idr = parse_rupiah("Nominal Transaksi", tokens.value("Nominal Transaksi")?)?;
 
@@ -34,7 +34,7 @@ pub fn parse(body: &str) -> Result<ParsedCharge, ParseError> {
         .ok_or_else(|| ParseError::NotCreditCard(source[0].to_string()))?
         .trim()
         .to_string();
-    let card_ref = parse_masked_card(source[1])?;
+    let card_ref = masked_card_ref("Sumber Dana", source[1], 4)?;
 
     Ok(ParsedCharge {
         merchant_raw,
@@ -43,22 +43,6 @@ pub fn parse(body: &str) -> Result<ParsedCharge, ParseError> {
         card_ref,
         card_name: Some(card_name),
     })
-}
-
-/// "****1234" -> "1234".
-fn parse_masked_card(raw: &str) -> Result<String, ParseError> {
-    let digits = raw.trim().trim_start_matches('*');
-    let valid = raw.trim().starts_with('*')
-        && digits.len() == 4
-        && digits.chars().all(|c| c.is_ascii_digit());
-    if valid {
-        Ok(digits.to_string())
-    } else {
-        Err(ParseError::BadValue {
-            field: "Sumber Dana",
-            value: raw.to_string(),
-        })
-    }
 }
 
 #[cfg(test)]
@@ -119,9 +103,9 @@ mod tests {
 
     #[test]
     fn unmasked_or_short_card_number_is_refused() {
-        assert!(parse_masked_card("1234").is_err());
-        assert!(parse_masked_card("****123").is_err());
-        assert!(parse_masked_card("****12a4").is_err());
-        assert_eq!(parse_masked_card("****1234"), Ok("1234".into()));
+        for bad in ["1234", "****123"] {
+            let body = QRIS_CREDIT_CARD.replace("****1234", bad);
+            assert!(parse(&body).is_err(), "{bad:?} should be refused");
+        }
     }
 }
