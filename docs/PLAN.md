@@ -1,6 +1,6 @@
 # Expense Assistant — Build Plan
 
-Last updated: Oct 18, 2026
+Last updated: Oct 24, 2026
 
 ## Goal and scope
 
@@ -162,6 +162,14 @@ Every write follows one path: the model proposes, the code validates, you confir
 
 Buttons handle the common path; for anything else, talk to it in your own words. The bot answers only your Telegram user ID.
 
+**Talking to the bot.** Any message that is not a command goes to `IntentParser`, which turns it into a list of proposed actions. The bot should feel like chatting with an assistant, not a command parser, and it replies in the language you wrote in. Still:
+
+- Actions that write (register a card, record a payment, record a charge) are shown back and wait for Confirm, after code has validated them.
+- Questions about your data ("how much do I owe Mandiri?") become read actions; code fills in every number, never the model.
+- A `reply` action carries the model's own words: a greeting, how to use the bot, a clarifying question, or "I can't do that yet".
+- It is not a general assistant. Anything outside cards, charges, payments and using the bot becomes `out_of_scope`, answered with a fixed message from code. Code also replaces any reply longer than 400 characters with that message, in case the model answers anyway.
+- Slash commands stay as shortcuts and as the fallback when the model is unavailable. Text after a command ("/cards my CIMB card ends in 19") goes to the model too, with the command as a hint; only a command's exact form skips the model.
+
 **One review message per charge**
 
 ```
@@ -184,6 +192,8 @@ SUSHI TEI PIK · Thu 16 Oct 20:14
 | keep this one for next month | Hold, book month set to next month |
 | the Gopay one was Indomaret, split the sushi 310k dining rest treat, hold the shoes | Three actions on three charges, confirmed together |
 | paid BCA 2.5jt | Payment of 2,500,000 on the BCA card |
+| add my Mandiri card, emails come from noreply.livin@bankmandiri.co.id, ends in 7078 | Register card Mandiri •7078 |
+| how much do I owe in total? | Balances, computed by code |
 
 **Conversation memory.** Each message is still one stateless model call. Code adds the charge you replied to (or the one awaiting input), your categories, and the last 10 turns from `messages`, so "no, make the treat 400k" works. The window resets after 30 minutes idle, after a charge is recorded, or on /new. One message can answer several open questions: the model returns one action per charge, each must match an open question, anything unmatched stays open, and you confirm the whole set.
 
@@ -216,22 +226,24 @@ Ship the happy path for one card first; each phase ends with a check you can run
 
 - [ ] SQLite schema and migrations
 - [ ] Card registration, Gmail poller and a parser for one bank, written from a sample notification email
+- [ ] `IntentParser` trait with the `claude -p` implementation and a JSON schema that returns a list of actions; Phase 1 actions: register card, record payment, show cards, show balances, reply
+- [ ] The rolling conversation window (`messages`, last 10 turns, reset after 30 minutes idle or on `/new`)
 - [ ] Daily review with the Record button only
 - [ ] Lunch Money insert with `apply_rules` and `external_id`
 - [ ] Trash the email after recording
-- [ ] `/paid` free text and `/balances`
+- [ ] Payments in free text ("paid BCA 2.5jt") and `/balances`
 - [ ] Weekly backup: the bot sends you the SQLite file
 
-**Done when:** a real charge goes from email to Lunch Money in one review, its email is trashed, the balance is right, and re-running the poller adds no duplicate.
+**Done when:** a card is registered by chatting with the bot, then a real charge goes from email to Lunch Money in one review, its email is trashed, the balance is right, and re-running the poller adds no duplicate.
 
 ### Phase 2: the edge cases
 
-- [ ] `IntentParser` trait with the `claude -p` implementation and a JSON schema that returns a list of actions
+- [ ] `IntentParser` actions for the edge cases below (split, partial, hold, amounts, merchants)
 - [ ] `EmailFieldLocator` fallback for emails without a parser: quoted fields, verbatim check, code-side conversion, sent-time check, "read by AI" marker in review
 - [ ] Split, Partial and Hold, with validation that parts sum correctly
 - [ ] Foreign-currency flow (`needs_amount`)
 - [ ] Versioned merchant rules document and merchant-rule flow (e-wallet, padel venue) (`needs_merchant`)
-- [ ] Jev categorization with ask-on-unsure, and the rolling conversation window
+- [ ] Jev categorization with ask-on-unsure
 
 **Done when:** each edge case has run once on a real charge without a manual fix in Lunch Money.
 
