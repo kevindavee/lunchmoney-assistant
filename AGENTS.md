@@ -81,3 +81,23 @@ Times are stored in UTC and shown in Asia/Jakarta.
 - Mock external HTTP in tests; never hit real Gmail or Lunch Money from `cargo test`.
 - Never run commands that send real Telegram messages or write to Lunch Money unless
   the owner asks.
+
+## Commits
+
+Commit only when the owner asks. Use Conventional Commits:
+
+```
+type(scope): summary
+
+Optional body: why this change, or the context needed to understand it.
+```
+
+- `type`: `feat`, `fix`, `refactor`, `test`, `docs`, `build`, `chore`, `perf`, `ci`.
+- `scope` (optional): the area touched, e.g. `db`, `parsers`, `gmail`, `telegram`,
+  `ledger`, `llm`, `plan`.
+- Summary: imperative mood, lowercase, no trailing period, at most 72 characters.
+- Body only when the subject is not enough, and only to explain **why** or give
+  context: the reason, the constraint, the decision and what was rejected. Never
+  restate what the diff already shows. Wrap at 72 characters.
+- One logical change per commit; split unrelated changes. Every commit should build
+  and pass `cargo test` on its own.
