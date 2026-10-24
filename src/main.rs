@@ -8,6 +8,7 @@ use tracing_subscriber::EnvFilter;
 use expense_assistant::config::Config;
 use expense_assistant::db;
 use expense_assistant::gmail::GmailClient;
+use expense_assistant::ledger::Ledger;
 use expense_assistant::telegram::{self, OwnerId};
 
 #[tokio::main]
@@ -32,10 +33,11 @@ async fn main() -> anyhow::Result<()> {
 
     let config = Config::from_env().context("loading configuration")?;
 
-    // Opening runs any pending migrations. The connection is handed to the
-    // ledger core once it exists (next Phase 1 task).
-    let _db = db::open(&config.database_path)
+    // Opening runs any pending migrations. The ledger owns the connection;
+    // nothing else touches the database.
+    let conn = db::open(&config.database_path)
         .with_context(|| format!("opening database at {}", config.database_path.display()))?;
+    let ledger = Arc::new(Ledger::new(conn));
     tracing::info!(path = %config.database_path.display(), "database ready");
 
     let http = reqwest::Client::builder()
@@ -49,7 +51,7 @@ async fn main() -> anyhow::Result<()> {
     let bot = Bot::new(&config.telegram.bot_token);
 
     let mut dispatcher = Dispatcher::builder(bot.clone(), telegram::handler())
-        .dependencies(dptree::deps![gmail, owner])
+        .dependencies(dptree::deps![gmail, ledger, owner])
         // Silently drop updates no handler took: other users, plain text.
         .default_handler(|_| async {})
         .enable_ctrlc_handler()
