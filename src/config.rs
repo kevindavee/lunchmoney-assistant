@@ -4,6 +4,7 @@
 //! Lunch Money, the LLM and Jev settings here.
 
 use std::net::SocketAddr;
+use std::path::PathBuf;
 
 use thiserror::Error;
 
@@ -22,6 +23,8 @@ pub enum ConfigError {
 pub struct Config {
     pub telegram: TelegramConfig,
     pub google: GoogleConfig,
+    /// SQLite file. `/data/expense.db` on Fly (the volume), any local path in dev.
+    pub database_path: PathBuf,
 }
 
 pub struct TelegramConfig {
@@ -107,6 +110,7 @@ impl Config {
                 client_secret: require("GOOGLE_CLIENT_SECRET")?,
                 refresh_token: require("GOOGLE_REFRESH_TOKEN")?,
             },
+            database_path: PathBuf::from(require("DATABASE_PATH")?),
         })
     }
 }
@@ -140,6 +144,7 @@ mod tests {
             ("GOOGLE_CLIENT_ID", "cid"),
             ("GOOGLE_CLIENT_SECRET", "csecret"),
             ("GOOGLE_REFRESH_TOKEN", "rtoken"),
+            ("DATABASE_PATH", "/tmp/expense.db"),
         ])
     }
 
@@ -161,6 +166,7 @@ mod tests {
         assert_eq!(config.telegram.owner_id, 42);
         assert!(config.telegram.webhook.is_none());
         assert_eq!(config.google.refresh_token, "rtoken");
+        assert_eq!(config.database_path, PathBuf::from("/tmp/expense.db"));
     }
 
     #[test]

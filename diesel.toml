@@ -1,0 +1,7 @@
+# Diesel CLI settings. `diesel print-schema` (or `diesel migration run`)
+# regenerates src/db/schema.rs from the migrations; don't edit that file by hand.
+[print_schema]
+file = "src/db/schema.rs"
+
+[migrations_directory]
+dir = "migrations"

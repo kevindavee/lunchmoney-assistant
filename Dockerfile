@@ -5,6 +5,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends cmake clang \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
+COPY build.rs diesel.toml ./
+COPY migrations ./migrations
 COPY src ./src
 RUN cargo build --release --locked
 

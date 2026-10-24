@@ -1,7 +1,3 @@
-mod config;
-mod gmail;
-mod telegram;
-
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -9,9 +5,10 @@ use teloxide::prelude::*;
 use teloxide::update_listeners::{Polling, webhooks};
 use tracing_subscriber::EnvFilter;
 
-use crate::config::Config;
-use crate::gmail::GmailClient;
-use crate::telegram::OwnerId;
+use expense_assistant::config::Config;
+use expense_assistant::db;
+use expense_assistant::gmail::GmailClient;
+use expense_assistant::telegram::{self, OwnerId};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -34,6 +31,12 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let config = Config::from_env().context("loading configuration")?;
+
+    // Opening runs any pending migrations. The connection is handed to the
+    // ledger core once it exists (next Phase 1 task).
+    let _db = db::open(&config.database_path)
+        .with_context(|| format!("opening database at {}", config.database_path.display()))?;
+    tracing::info!(path = %config.database_path.display(), "database ready");
 
     let http = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
