@@ -35,7 +35,7 @@ Everything below was settled in discussion; revisit only with new facts.
 | Hosting | Fly.io, one always-on machine (512MB to 1GB), Singapore region, auto-stop off | Needs a disk and the `claude` CLI; timers must keep firing |
 | Email | Gmail API, OAuth app set to In production, scope `gmail.modify`, poll every 5 to 10 min | Narrow, revocable access; polling cannot lapse silently like a 7-day watch |
 | Books | Lunch Money v2 API, posting to the Monthly Budget account, inserts with `apply_rules` on | The rules flag did not work in v1 |
-| LLM | Claude Pro via `claude -p --output-format json --json-schema`, built-in tools disabled, behind an `IntentParser` trait | Uses the existing subscription; switch to an API key with one config flag |
+| LLM | Claude Pro via `claude -p --output-format json --json-schema`, built-in tools disabled, behind `IntentParser` (your messages) and `EmailFieldLocator` (emails no parser handles) traits | Uses the existing subscription; switch to an API key with one config flag |
 | Categorization | Lunch Money rules, then Jev, then ask you | Rules cost nothing and never guess |
 | Money | Rupiah stored as `i64` | No floating-point errors |
 | Retention | Delete rows older than 3 months once recorded | Short-lived working data, not an archive |
@@ -50,10 +50,11 @@ You on Telegram       <-> Bot handlers ------+--> Ledger core --> SQLite (Fly vo
                           Scheduler ---------+        |
                                                       +--> Lunch Money API
 Bot handlers <-> claude -p (Pro): text -> JSON proposal
+Ingestor     <-> claude -p (Pro): unknown email -> quoted fields (code verifies)
 Ledger core  ->  Jev API: category guess
 ```
 
-The ingestor, bot handlers and scheduler all go through the ledger core, and only the core writes to SQLite. The model only turns your free text into a proposal; it never calls Gmail, Lunch Money or the database.
+The ingestor, bot handlers and scheduler all go through the ledger core, and only the core writes to SQLite. The model turns your free text into a proposal, and quotes where the fields are in emails no parser handles; it never calls Gmail, Lunch Money or the database, and never decides a number.
 
 ## Data model
 
@@ -61,8 +62,8 @@ Eight small tables. `charges.status` drives every flow, and only a recorded char
 
 | Table | Holds | Key columns |
 | --- | --- | --- |
-| `cards` | One row per card billing account; cards that share one bill share one row | bank, notify\_senders, subject\_match, parser, cutoff\_day, due\_day, payable\_idr |
-| `charges` | One row per notified charge | gmail\_msg\_id (`UNIQUE`), card\_id, merchant\_raw, merchant, amount\_idr, orig\_currency, orig\_amount, charged\_at, book\_month, status, needs\_merchant, payee, note, lm\_ids, telegram\_message\_id, recorded\_at |
+| `cards` | One row per card billing account; cards that share one bill share one row | bank, notify\_senders, card\_ref, cutoff\_day, due\_day, payable\_idr |
+| `charges` | One row per notified charge | gmail\_msg\_id (`UNIQUE`), card\_id, merchant\_raw, merchant, amount\_idr, orig\_currency, orig\_amount, charged\_at, book\_month, status, needs\_merchant, extracted\_by, payee, note, lm\_ids, telegram\_message\_id, recorded\_at |
 | `payments` | Card payments you report | card\_id, amount\_idr, paid\_at |
 | `merchant_answers` | Past answers per merchant rule, offered as buttons next time | rule\_name, answer, last\_used\_at |
 | `reminders_sent` | Stops duplicate due-date reminders | card\_id, cycle\_end, days\_before |
@@ -97,12 +98,14 @@ Every write follows one path: the model proposes, the code validates, you confir
 
 ### Ingest
 
-- Poll Gmail every 5 to 10 minutes, only for notification senders registered with /cards.
-- Parse each bank's template with deterministic code. The model never reads amounts.
+- Poll Gmail every 5 to 10 minutes, only for notification senders registered with /cards. Search by sender only, never by subject, so a renamed subject cannot hide a charge.
+- If a parser exists for the sender, parse with deterministic code. If it fails, alert that the parser needs fixing and try the model fallback for this email.
+- Otherwise the model quotes the amount, time, merchant and card exactly as written. Code checks each quote appears verbatim in the email, converts the amount itself (rupiah: a trailing 3-digit group is thousands, decimals must be zero), and accepts the time only if it falls shortly before the email's sent time. Any doubt means an alert, never a guess. These charges are marked "read by AI" in review.
+- The card is matched by `card_ref`: the card digits the email shows after the mask (last 4, or last 2 for banks like CIMB Niaga).
 - Insert the charge with a `UNIQUE` Gmail message ID, then label the email `expense/ingested`.
 - Non-rupiah amount: status `needs_amount`, with the original currency and amount stored.
 - Descriptor matches a merchant rule (e-wallet, payment gateway, padel booking platform): flag `needs_merchant`.
-- Unparseable email: send a Telegram alert with the subject line. Never guess. A registered sender whose email matches no card gets an alert with a Register button.
+- The content, not the subject, decides what is a card charge. An email that looks like a card charge but cannot be read (parser fails, or the model's quotes fail verification) gets a Telegram alert with the subject line. Never guess. Other emails from the sender (transfers, promos) are skipped. A registered sender whose email matches no card gets an alert with a Register button.
 
 ### Daily review
 
@@ -189,7 +192,7 @@ SUSHI TEI PIK · Thu 16 Oct 20:14
 - `/review`: run the daily review now
 - `/balances`: payable per card and the held total
 - `/held`: list held charges with their book months
-- `/cards`: register a card by its notification email (sender and subject) and set its cutoff and due days; a new bank also needs its parser written in code
+- `/cards`: register a card by its notification email (sender, plus the card digits the email shows) and set its cutoff and due days; a new bank works through the model fallback, and gets a parser only if that proves unreliable
 - `/merchants`: get the merchant rules document and remembered answers; send back an edited copy to save a new version, after validation and a diff
 - `/new`: clear the conversation window
 - `/help`: example phrases
@@ -224,6 +227,7 @@ Ship the happy path for one card first; each phase ends with a check you can run
 ### Phase 2: the edge cases
 
 - [ ] `IntentParser` trait with the `claude -p` implementation and a JSON schema that returns a list of actions
+- [ ] `EmailFieldLocator` fallback for emails without a parser: quoted fields, verbatim check, code-side conversion, sent-time check, "read by AI" marker in review
 - [ ] Split, Partial and Hold, with validation that parts sum correctly
 - [ ] Foreign-currency flow (`needs_amount`)
 - [ ] Versioned merchant rules document and merchant-rule flow (e-wallet, padel venue) (`needs_merchant`)
@@ -236,7 +240,7 @@ Ship the happy path for one card first; each phase ends with a check you can run
 - [ ] `/cards` for cutoff and due days
 - [ ] Due-date reminders
 - [ ] Monthly cleanup
-- [ ] Parsers for the remaining banks
+- [ ] Check the model fallback on the remaining banks (CIMB Niaga, Jenius); write a parser only where it fails
 - [ ] Failure alerts (see Operations)
 
 **Done when:** one full statement cycle passes with reminders sent and no missed alerts.
@@ -262,6 +266,7 @@ Any failure must reach you on Telegram; a bot that stops quietly is the main fai
 | No successful poll in 60 minutes | Poller crashed or Gmail is down |
 | `claude -p` auth error or empty output | Subscription token expired or policy changed: switch `LLM_MODE` |
 | Parser could not read a bank email | Bank changed its template |
+| Model's quotes failed verification | Unusual or new email layout: check it, or add a parser |
 | Lunch Money write failed | API error; the charge stays pending |
 
 **Backups**
@@ -275,8 +280,8 @@ The biggest risk is the subscription route changing under you; the `IntentParser
 
 | Risk | Effect | Fallback |
 | --- | --- | --- |
-| Anthropic changes subscription use for the Agent SDK or `claude -p` again | Free-text parsing stops | Set `LLM_MODE=api` with a pay-as-you-go key, about $1 to 2 a month |
-| A bank changes its email template | Charges from that bank are missed | Parser-failure alert; fix that bank's parser |
+| Anthropic changes subscription use for the Agent SDK or `claude -p` again | Free-text parsing stops, and emails without a parser stop being read | Set `LLM_MODE=api` with a pay-as-you-go key, about $1 to 2 a month |
+| A bank changes its email template | That bank's parser stops matching | Parser-failure alert; the model fallback can read it meanwhile; fix the parser |
 | Missing notifications | Due-date reminders understate the bill | Accepted; the reminder is labeled an estimate |
 | Gmail token revoked | Ingestion stops | `invalid_grant` alert; redo OAuth |
 | Fly volume tied to one machine | Data loss if the volume fails | Snapshots plus the weekly backup file |

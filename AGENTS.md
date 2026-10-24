@@ -29,14 +29,20 @@ and `cargo test`, then stop and summarize what changed.
 
 1. **Money is `i64` rupiah.** No `f32`/`f64` anywhere near amounts. Parse "2.5jt", "310k",
    "1.234.567" into `i64` with unit-tested helpers.
-2. **The model never reads amounts from emails.** Bank emails are parsed by deterministic
-   per-bank parsers in `src/parsers/`, each with tests built from a real sample email
-   stored in `tests/fixtures/` (redact anything personal except the fields being parsed).
+2. **The model never decides a number from an email; code does.** Emails from a sender
+   with a parser in `src/parsers/` are parsed deterministically, each parser tested
+   against a real sample in `tests/fixtures/` (redact anything personal except the
+   fields being parsed). Other emails from registered senders go to the model, which
+   only *quotes* where the fields are. Code then checks every quote appears verbatim in
+   the email, converts amount and time itself, checks the time against the email's sent
+   time, and alerts on any doubt. The model never returns a parsed amount or date.
 3. **Nothing is written without confirmation.** Flow is always: model proposes ->
    code validates -> user taps confirm -> write. The model has no tools.
-4. **The LLM is behind a trait.** `IntentParser` returns `Vec<ProposedAction>`. The
-   default implementation shells out to `claude -p --output-format json --json-schema ...`
-   with built-in tools disabled. Selected by `LLM_MODE`. No other module calls the model.
+4. **The LLM is behind traits.** `IntentParser` returns `Vec<ProposedAction>` for your
+   messages; `EmailFieldLocator` returns quoted fields for emails no parser handles. The
+   default implementations shell out to `claude -p --output-format json --json-schema ...`
+   with built-in tools disabled. Selected by `LLM_MODE`. No module outside `llm/` calls
+   the model.
 5. **Validate every proposal in code:** split parts sum to the charge amount, the category
    exists, each action targets a charge with an open question, payments name a known card.
 6. **Only the ledger core writes to SQLite.** Telegram handlers, the ingestor and the
@@ -61,11 +67,11 @@ src/
   config.rs
   db/              migrations runner, queries
   ledger/          state machine, payable, validation (pure, heavily tested)
-  parsers/         one module per bank
+  parsers/         one module per email template; picked by sender
   gmail.rs
   lunchmoney.rs
   jev.rs
-  llm/             IntentParser trait, ClaudeCli impl, JSON schema
+  llm/             IntentParser + EmailFieldLocator traits, ClaudeCli impl, JSON schemas
   telegram/        handlers, keyboards, message formatting
   scheduler.rs     daily review 20:00 WIB, reminders 09:00 WIB, cleanup, backup
 migrations/
