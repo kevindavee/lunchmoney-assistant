@@ -5,11 +5,12 @@ use teloxide::prelude::*;
 use teloxide::update_listeners::{Polling, webhooks};
 use tracing_subscriber::EnvFilter;
 
-use expense_assistant::config::Config;
+use expense_assistant::config::{Config, LlmMode};
 use expense_assistant::db;
 use expense_assistant::gmail::GmailClient;
 use expense_assistant::ledger::Ledger;
-use expense_assistant::telegram::{self, OwnerId};
+use expense_assistant::llm::{ClaudeCli, IntentParser};
+use expense_assistant::telegram::{self, OwnerId, Proposals};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -47,12 +48,22 @@ async fn main() -> anyhow::Result<()> {
     // `Arc` lets every handler share one client without copying it.
     let gmail = Arc::new(GmailClient::new(http, &config.google));
     let owner = OwnerId(UserId(config.telegram.owner_id));
-
     let bot = Bot::new(&config.telegram.bot_token);
 
+    // `Arc<dyn IntentParser>` is a trait object: handlers call the trait's
+    // methods without knowing which implementation LLM_MODE picked.
+    let intent: Arc<dyn IntentParser> = match config.llm.mode {
+        LlmMode::Cli => {
+            let cli = ClaudeCli::new(&config.llm);
+            check_claude_cli(&bot, owner, &cli).await;
+            Arc::new(cli)
+        }
+    };
+    let proposals = Arc::new(Proposals::default());
+
     let mut dispatcher = Dispatcher::builder(bot.clone(), telegram::handler())
-        .dependencies(dptree::deps![gmail, ledger, owner])
-        // Silently drop updates no handler took: other users, plain text.
+        .dependencies(dptree::deps![gmail, ledger, intent, proposals, owner])
+        // Silently drop updates no handler took: other users, photos.
         .default_handler(|_| async {})
         .enable_ctrlc_handler()
         .build();
@@ -102,4 +113,24 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Checks the `claude` CLI at startup. A broken CLI does not stop the bot,
+/// since slash commands still work without the model, but it must be loud:
+/// it is logged and sent to the owner on Telegram.
+async fn check_claude_cli(bot: &Bot, owner: OwnerId, cli: &ClaudeCli) {
+    match cli.check().await {
+        Ok(version) => tracing::info!(%version, "claude CLI ready"),
+        Err(err) => {
+            tracing::error!(error = %err, "claude CLI check failed");
+            let alert = format!(
+                "⚠️ The claude CLI is not working, so free-text messages will fail: {err}\n\
+                 Slash commands still work."
+            );
+            // A private chat's ID is the user's ID.
+            if let Err(send_err) = bot.send_message(ChatId::from(owner.0), alert).await {
+                tracing::error!(error = %send_err, "could not send the claude CLI alert");
+            }
+        }
+    }
 }

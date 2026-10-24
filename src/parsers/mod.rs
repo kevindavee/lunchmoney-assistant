@@ -44,6 +44,41 @@ pub fn for_sender(sender: &str) -> Option<ParseFn> {
     }
 }
 
+/// A sender that has a parser, described for people (and the model) choosing
+/// which sender a card uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KnownSender {
+    /// What the emails are, e.g. "Mandiri credit card".
+    pub description: &'static str,
+    pub sender: &'static str,
+    /// How many card digits the emails show after the mask.
+    pub card_digits: usize,
+}
+
+/// Every sender `for_sender` has a parser for.
+pub const KNOWN_SENDERS: [KnownSender; 4] = [
+    KnownSender {
+        description: "Mandiri credit card used in the Livin' app (QRIS payments)",
+        sender: mandiri_livin::SENDER,
+        card_digits: 4,
+    },
+    KnownSender {
+        description: "Mandiri credit card at a terminal or online",
+        sender: mandiri_card::SENDER,
+        card_digits: 4,
+    },
+    KnownSender {
+        description: "CIMB Niaga credit card",
+        sender: cimb_niaga::SENDER,
+        card_digits: 2,
+    },
+    KnownSender {
+        description: "Jenius credit card",
+        sender: jenius::SENDER,
+        card_digits: 4,
+    },
+];
+
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ParseError {
     #[error("field {0:?} not found")]
@@ -338,6 +373,13 @@ mod tests {
         let card_body = include_str!("../../tests/fixtures/mandiri_card/charge.txt");
         assert_eq!(livin(livin_body).unwrap().amount_idr, 31_200);
         assert_eq!(card(card_body).unwrap().amount_idr, 420_000);
+    }
+
+    #[test]
+    fn every_known_sender_has_a_parser() {
+        for known in KNOWN_SENDERS {
+            assert!(for_sender(known.sender).is_some(), "{}", known.sender);
+        }
     }
 
     #[test]

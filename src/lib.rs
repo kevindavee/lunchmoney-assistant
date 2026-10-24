@@ -5,5 +5,6 @@ pub mod config;
 pub mod db;
 pub mod gmail;
 pub mod ledger;
+pub mod llm;
 pub mod parsers;
 pub mod telegram;

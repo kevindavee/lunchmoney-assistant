@@ -1,7 +1,7 @@
 //! Configuration, read from environment variables only.
 //!
-//! Phase 0 only loads what the bot and the Gmail client need. Later phases add
-//! Lunch Money, the LLM and Jev settings here.
+//! Loads what the bot, the Gmail client and the LLM need so far. Later tasks
+//! add Lunch Money and Jev settings here.
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -23,6 +23,7 @@ pub enum ConfigError {
 pub struct Config {
     pub telegram: TelegramConfig,
     pub google: GoogleConfig,
+    pub llm: LlmConfig,
     /// SQLite file. `/data/expense.db` on Fly (the volume), any local path in dev.
     pub database_path: PathBuf,
 }
@@ -49,6 +50,23 @@ pub struct GoogleConfig {
     pub client_id: String,
     pub client_secret: String,
     pub refresh_token: String,
+}
+
+pub struct LlmConfig {
+    pub mode: LlmMode,
+    /// Long-lived token from `claude setup-token`, passed to the `claude` CLI
+    /// as `CLAUDE_CODE_OAUTH_TOKEN`. `None` locally uses your own login.
+    pub oauth_token: Option<String>,
+    /// The CLI's account folder (`CLAUDE_CONFIG_DIR`), for machines with more
+    /// than one Claude login. `None` uses the CLI's default, `~/.claude`.
+    pub config_dir: Option<PathBuf>,
+}
+
+/// Which `IntentParser` implementation to use (`LLM_MODE`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LlmMode {
+    /// `claude -p` with the Claude subscription.
+    Cli,
 }
 
 impl Config {
@@ -99,6 +117,17 @@ impl Config {
             }
         };
 
+        let mode = match get("LLM_MODE").map(|m| m.trim().to_ascii_lowercase()) {
+            None => LlmMode::Cli,
+            Some(m) if m == "cli" => LlmMode::Cli,
+            Some(m) => {
+                return Err(ConfigError::Invalid {
+                    name: "LLM_MODE",
+                    reason: format!("{m:?} is not supported yet; use \"cli\""),
+                });
+            }
+        };
+
         Ok(Config {
             telegram: TelegramConfig {
                 bot_token: require("TELEGRAM_BOT_TOKEN")?,
@@ -109,6 +138,11 @@ impl Config {
                 client_id: require("GOOGLE_CLIENT_ID")?,
                 client_secret: require("GOOGLE_CLIENT_SECRET")?,
                 refresh_token: require("GOOGLE_REFRESH_TOKEN")?,
+            },
+            llm: LlmConfig {
+                mode,
+                oauth_token: get("CLAUDE_CODE_OAUTH_TOKEN"),
+                config_dir: get("CLAUDE_CONFIG_DIR").map(|d| PathBuf::from(d.trim())),
             },
             database_path: PathBuf::from(require("DATABASE_PATH")?),
         })
@@ -178,6 +212,38 @@ mod tests {
         let webhook = load(&env).unwrap().telegram.webhook.unwrap();
         assert_eq!(webhook.url.path(), "/webhook");
         assert_eq!(webhook.listen.port(), 9000);
+    }
+
+    #[test]
+    fn llm_mode_defaults_to_cli() {
+        let config = load(&base_env()).unwrap();
+        assert_eq!(config.llm.mode, LlmMode::Cli);
+        assert!(config.llm.oauth_token.is_none());
+        assert!(config.llm.config_dir.is_none());
+    }
+
+    #[test]
+    fn loads_config_dir() {
+        let mut env = base_env();
+        env.insert("CLAUDE_CONFIG_DIR", "/Users/me/.claude-work");
+        let llm = load(&env).unwrap().llm;
+        assert_eq!(
+            llm.config_dir,
+            Some(PathBuf::from("/Users/me/.claude-work"))
+        );
+    }
+
+    #[test]
+    fn unsupported_llm_mode_is_invalid() {
+        let mut env = base_env();
+        env.insert("LLM_MODE", "api");
+        assert!(matches!(
+            expect_err(load(&env)),
+            ConfigError::Invalid {
+                name: "LLM_MODE",
+                ..
+            }
+        ));
     }
 
     #[test]

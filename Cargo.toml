@@ -15,7 +15,7 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 teloxide = { version = "0.17.0", default-features = false, features = ["macros", "webhooks-axum", "rustls", "ctrlc_handler"] }
 thiserror = "2.0.21"
-tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "signal"] }
+tokio = { version = "1.54.1", features = ["io-util", "macros", "process", "rt-multi-thread", "signal", "time"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 url = "2.5.8"

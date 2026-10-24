@@ -9,6 +9,7 @@ use diesel::result::{DatabaseErrorKind, Error::DatabaseError};
 
 use super::{Ledger, LedgerError};
 use crate::db::schema::cards;
+use crate::parsers::KNOWN_SENDERS;
 
 /// Longest bank name accepted, in characters.
 const MAX_BANK_LEN: usize = 40;
@@ -82,22 +83,12 @@ impl NewCard {
             return Err(invalid("give at least one sender address"));
         }
 
-        let card_ref = card_ref.map(str::trim);
-        if let Some(digits) = card_ref {
-            let valid =
-                (2..=4).contains(&digits.len()) && digits.bytes().all(|b| b.is_ascii_digit());
-            if !valid {
-                return Err(invalid(format!(
-                    "card digits must be the 2 to 4 digits the email shows after the mask, \
-                     got {digits:?}"
-                )));
-            }
-        }
+        let card_ref = fit_card_ref(&normalized, card_ref.map(str::trim))?;
 
         Ok(Self {
             bank: bank.to_string(),
             senders: normalized,
-            card_ref: card_ref.map(str::to_string),
+            card_ref,
         })
     }
 
@@ -107,6 +98,55 @@ impl NewCard {
 
     pub fn label(&self) -> String {
         label(&self.bank, self.card_ref.as_deref())
+    }
+}
+
+/// Checks the card digits against what the senders' emails show, since
+/// `find_card` needs them to match exactly.
+///
+/// For senders with a parser the count is known: "ends in 4419" on a CIMB
+/// Niaga card keeps "19", the two digits its emails show. Fewer digits than
+/// the emails show, or none, is refused. Other senders take 2 to 4 digits.
+fn fit_card_ref(senders: &[String], card_ref: Option<&str>) -> Result<Option<String>, LedgerError> {
+    if let Some(digits) = card_ref
+        && (digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()))
+    {
+        return Err(invalid(format!(
+            "card digits must be digits only, like 7078; got {digits:?}"
+        )));
+    }
+
+    // The digit count each sender with a parser shows.
+    let known: Vec<(&str, usize)> = KNOWN_SENDERS
+        .iter()
+        .filter(|k| senders.iter().any(|s| s == k.sender))
+        .map(|k| (k.sender, k.card_digits))
+        .collect();
+    let Some(&(sender, shown)) = known.first() else {
+        return match card_ref {
+            Some(digits) if !(2..=4).contains(&digits.len()) => Err(invalid(format!(
+                "card digits must be the 2 to 4 digits the email shows after the mask; \
+                 got {digits:?}"
+            ))),
+            other => Ok(other.map(str::to_string)),
+        };
+    };
+    if known.iter().any(|&(_, n)| n != shown) {
+        return Err(invalid(
+            "these senders show different numbers of card digits; register each as its own card",
+        ));
+    }
+
+    match card_ref {
+        None => Err(invalid(format!(
+            "emails from {sender} show the last {shown} card digits; please add them"
+        ))),
+        Some(digits) if digits.len() < shown => Err(invalid(format!(
+            "emails from {sender} show the last {shown} card digits; got {digits:?}"
+        ))),
+        // `&digits[start..]` is a slice of the same string: the last
+        // `shown` bytes, which are ASCII digits, so it cannot split a character.
+        Some(digits) => Ok(Some(digits[digits.len() - shown..].to_string())),
     }
 }
 
@@ -255,6 +295,8 @@ mod tests {
 
     const LIVIN: &str = "noreply.livin@bankmandiri.co.id";
     const CIMB: &str = "creditcard.notification@cimbniaga.co.id";
+    /// A sender with no parser, so no known digit count.
+    const OTHER: &str = "notif@bank.example";
 
     fn new_card(bank: &str, senders: &[&str], card_ref: Option<&str>) -> NewCard {
         NewCard::new(bank, senders, card_ref).unwrap()
@@ -311,10 +353,34 @@ mod tests {
     fn new_card_rejects_bad_digits() {
         for bad in ["1", "12345", "XX19", "12a4", ""] {
             assert!(
-                NewCard::new("Mandiri", &[LIVIN], Some(bad)).is_err(),
+                NewCard::new("Other", &[OTHER], Some(bad)).is_err(),
                 "{bad:?} should be rejected"
             );
         }
+    }
+
+    #[test]
+    fn digits_fit_what_the_emails_show() {
+        // CIMB Niaga emails show two digits; "ends in 4419" keeps "19".
+        assert_eq!(
+            new_card("CIMB Niaga", &[CIMB], Some("4419")).label(),
+            "CIMB Niaga •19"
+        );
+        assert_eq!(
+            new_card("Mandiri", &[LIVIN], Some("12347078")).label(),
+            "Mandiri •7078"
+        );
+        let msg = invalid_message(NewCard::new("Mandiri", &[LIVIN], Some("78")));
+        assert!(msg.contains("last 4 card digits"), "{msg}");
+        let msg = invalid_message(NewCard::new("Mandiri", &[LIVIN], None));
+        assert!(msg.contains("please add them"), "{msg}");
+        let msg = invalid_message(NewCard::new("Mixed", &[LIVIN, CIMB], Some("7078")));
+        assert!(msg.contains("different numbers"), "{msg}");
+        // A known sender alongside one without a parser uses the known count.
+        assert_eq!(
+            new_card("Mandiri", &[OTHER, LIVIN], Some("7078")).label(),
+            "Mandiri •7078"
+        );
     }
 
     #[test]
@@ -360,9 +426,9 @@ mod tests {
     fn finds_card_without_digits() {
         let ledger = test_ledger();
         let card = ledger
-            .register_card(new_card("Jenius", &["jenius_noreply@smbci.com"], None))
+            .register_card(new_card("Other", &[OTHER], None))
             .unwrap();
-        let found = ledger.find_card("jenius_noreply@smbci.com", None).unwrap();
+        let found = ledger.find_card(OTHER, None).unwrap();
         assert_eq!(found.map(|c| c.id), Some(card.id));
     }
 
@@ -373,16 +439,16 @@ mod tests {
             .register_card(new_card("Mandiri", &[LIVIN], Some("7078")))
             .unwrap();
         // Another bank name, but one shared sender and the same digits.
-        let result = ledger.register_card(new_card("Bank Mandiri", &[CIMB, LIVIN], Some("7078")));
+        let result = ledger.register_card(new_card("Bank Mandiri", &[OTHER, LIVIN], Some("7078")));
         assert!(
             matches!(&result, Err(LedgerError::CardConflict(label)) if label == "Mandiri •7078"),
             "{result:?}"
         );
 
         ledger
-            .register_card(new_card("Jenius", &[CIMB], None))
+            .register_card(new_card("Other", &[OTHER], None))
             .unwrap();
-        let result = ledger.register_card(new_card("Other", &[CIMB], None));
+        let result = ledger.register_card(new_card("Another", &[OTHER], None));
         assert!(
             matches!(result, Err(LedgerError::CardConflict(_))),
             "{result:?}"
