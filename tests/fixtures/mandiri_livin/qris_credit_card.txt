@@ -1,0 +1,47 @@
+Pembayaran Berhasil
+
+Halo <Myself>,
+
+
+Berikut adalah detail transaksi Anda dengan QR:
+
+
+Penerima
+
+Michie Laundry
+Tangerang (Kota - ID
+
+
+Tanggal    23 Okt 2026
+
+
+Jam    13:18:34 WIB
+
+
+Nominal Transaksi    Rp 31.200,00
+
+
+No. Referensi    2610230000000000001
+
+
+No. Ref. QRIS    610230000001
+
+
+Merchant PAN    9360000800000000001
+
+
+Customer PAN    9360000800000000002
+
+
+Pengakuisisi    Bank Mandiri
+
+
+Terminal ID    A01
+
+Sumber Dana
+
+Kartu Kredit - Marriott Bonvoy® Mandiri
+****1234
+
+
+Simpan email ini sebagai referensi transaksi Anda. Terima kasih telah bertransaksi di aplikasi Livin' by Mandiri.

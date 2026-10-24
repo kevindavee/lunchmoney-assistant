@@ -4,4 +4,5 @@
 pub mod config;
 pub mod db;
 pub mod gmail;
+pub mod parsers;
 pub mod telegram;

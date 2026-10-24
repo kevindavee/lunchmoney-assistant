@@ -1,0 +1,16 @@
+Hi <Myself>,
+
+Thank you for using Jenius Credit Card. You've just made a transaction with
+Card number: 400000******1234
+Merchant: GOPAYID 1500729 ID
+Transaction date & time: 23 OCT 2026 19:02:08 WIB
+Total: IDR 20,500.00
+If you not do this transaction, please immediately call 1500 365.
+
+Beware of scams especially the one who impersonate Jenius team. Please do not share this information to anyone including Jenius team:
+-Credit Card Valid Date
+-CVV
+-PIN
+-OTP Code (only for approving online transaction)
+
+Always update the changes of information like phone number & e-mail in app for more secure transaction with Jenius Credit Card.
